@@ -124,6 +124,37 @@ t.test("rejects an https upstream with 503 by default", function()
   t.equal(state.connected, nil) -- never touched the proxy
 end)
 
+t.test("guards grpc upstreams like https: reject by default, bypass opt-in", function()
+  -- A globally-applied plugin must not re-send grpc (HTTP/2) as an
+  -- HTTP/1.1 absolute-form request.
+  local handler, state = fresh_handler({
+    service = { protocol = "grpc", host = "a.internal", port = 9090 },
+  })
+  handler:access({ proxy_host = "squid.dmz", proxy_port = 3128,
+                   on_https = "reject" })
+  t.equal(state.exit_status, 503)
+  t.equal(state.connected, nil)
+
+  local handler2, state2 = fresh_handler({
+    service = { protocol = "grpcs", host = "a.internal", port = 9090 },
+  })
+  handler2:access({ proxy_host = "squid.dmz", proxy_port = 3128,
+                    on_https = "bypass" })
+  t.equal(state2.exit_status, nil)
+  t.equal(state2.connected, nil) -- direct, untouched
+end)
+
+t.test("maps a 407 from the proxy to a 502 gateway error", function()
+  -- Proxy-Authenticate is stripped as hop-by-hop, so a forwarded 407 is
+  -- a challenge the client can never satisfy.
+  local handler, state = fresh_handler({
+    service = { protocol = "http", host = "a.internal", port = 80 },
+    response = { status = 407, headers = {}, body = "denied" },
+  })
+  handler:access({ proxy_host = "squid.dmz", proxy_port = 3128 })
+  t.equal(state.exit_status, 502)
+end)
+
 t.test("bypasses the proxy for https when configured", function()
   local handler, state = fresh_handler({
     service = { protocol = "https", host = "a.internal", port = 8443 },

@@ -1,8 +1,8 @@
 package = "kong-egress-proxy"
-version = "0.1.0-1"
+version = "0.1.1-1"
 source = {
   url = "git+https://github.com/davidgrldo/kong-egress-proxy.git",
-  tag = "v0.1.0",
+  tag = "v0.1.1",
   -- luarocks clones the repo into a directory named after it; source.dir
   -- is relative to that clone's parent, so the repo name stays in the path.
   dir = "kong-egress-proxy/plugins/egress-proxy",

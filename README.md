@@ -75,21 +75,35 @@ this plugin sends the hop itself. In the access phase it:
 4. adds `Proxy-Authorization` when credentials are configured;
 5. returns the proxy's response via `kong.response.exit`.
 
-Trade-offs of owning the hop: the response is buffered (no streaming), and
-a request body must fit in nginx's client body buffer to be forwarded
-(oversized bodies get a clear `413`).
+Trade-offs of owning the hop:
+
+- **The response is buffered**, not streamed.
+- **A request body must fit in nginx's client body buffer** (oversized
+  bodies get a clear `413`).
+- **Kong load balancing is bypassed**: `service.host` goes verbatim into
+  the absolute URI for the *proxy* to resolve. A `service.host` naming a
+  Kong Upstream entity will not work — ring-balancer targets,
+  `service.retries` and health checks don't apply to the proxied hop.
+- **WebSocket is out of scope**: `Upgrade` is hop-by-hop and stripped, so
+  don't put this plugin on routes carrying WebSocket traffic.
+- **A `407` from the proxy is mapped to `502`** with a log line —
+  `Proxy-Authenticate` is a hop-by-hop challenge the client could never
+  satisfy anyway.
 
 ## Scope: http upstreams only — deliberately
 
 A forward proxy carries **https** as a `CONNECT` tunnel with the TLS
 handshake inside it. Kong's data path cannot speak that, and hand-rolling
-TLS-inside-TLS in plugin Lua is fighting the platform. Two honest options
-per plugin instance:
+TLS-inside-TLS in plugin Lua is fighting the platform. The same applies to
+`grpc`/`grpcs` Services — HTTP/2 cannot cross a forward proxy as an
+HTTP/1.1 absolute-form request, so one `on_https` switch guards **every
+non-http protocol** (a globally-applied plugin never silently mangles
+them). Two honest options per plugin instance:
 
-- `on_https: reject` (default) — https Services get a `503` with a clear
-  log line, so a misconfiguration is loud, never silent.
-- `on_https: bypass` — https Services connect **directly**, skipping the
-  proxy (for topologies where the firewall allows direct 443 egress).
+- `on_https: reject` (default) — non-http Services get a `503` with a
+  clear log line, so a misconfiguration is loud, never silent.
+- `on_https: bypass` — non-http Services connect **directly**, skipping
+  the proxy (for topologies where the firewall allows direct egress).
 
 For https egress that *must* cross a proxy, use a transparent proxy
 (Squid intercept + firewall redirect) or an egress gateway — not a Kong
@@ -103,11 +117,11 @@ plugin. Anything claiming otherwise is fighting the data path.
 | `proxy_port` | integer | *required* | Forward proxy port (e.g. 3128). |
 | `proxy_username` | string | *(none)* | Basic credentials for the proxy hop. |
 | `proxy_password` | string | *(none)* | Referenceable — supports `{vault://...}` so it never sits in plain config. Requires `proxy_username`. |
-| `on_https` | string | `reject` | `reject` https Services with 503, or `bypass` the proxy for them. |
+| `on_https` | string | `reject` | `reject` non-http Services (https, grpc, grpcs) with 503, or `bypass` the proxy for them. |
 
 ## Tests
 
-Every behavior claimed here is asserted: **18 unit tests** (plain Lua 5.1,
+Every behavior claimed here is asserted: **20 unit tests** (plain Lua 5.1,
 kong/ngx mocked) and a **10-case e2e suite** against real Kong 3.9 + real
 Squid. The e2e proves proxying by reading **Squid's access log** — not just
 end-to-end success — including the negative case: bypassed https traffic
@@ -132,7 +146,7 @@ export KONG_PLUGINS=bundled,egress-proxy
 Or from a checkout:
 
 ```sh
-cd plugins/egress-proxy && luarocks make kong-egress-proxy-0.1.0-1.rockspec
+cd plugins/egress-proxy && luarocks make kong-egress-proxy-0.1.1-1.rockspec
 ```
 
 ## Roadmap

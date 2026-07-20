@@ -5,7 +5,7 @@ local http = require "resty.http"
 -- anything that rewrites the path or target (request-transformer 801,
 -- routing plugins, auth), because it captures the final upstream and
 -- takes over the connection to the proxy.
-local Handler = { VERSION = "0.1.0", PRIORITY = 50 }
+local Handler = { VERSION = "0.1.1", PRIORITY = 50 }
 
 local function fail(status, message)
   return kong.response.exit(status, { message = message })
@@ -19,17 +19,21 @@ function Handler:access(conf)
     return
   end
 
-  if service.protocol == "https" then
-    -- A forward proxy carries https as a CONNECT tunnel, which nginx's
-    -- proxy_pass data path (and therefore a Kong plugin) cannot speak.
+  if service.protocol ~= "http" then
+    -- Only plain http can cross a forward proxy as an HTTP/1.1
+    -- absolute-form request: https needs a CONNECT tunnel, grpc/grpcs are
+    -- HTTP/2. Guarding on ~= "http" keeps a globally-applied plugin from
+    -- silently mangling those services.
     if conf.on_https == "bypass" then
-      kong.log.debug("egress-proxy: https upstream, bypassing the proxy")
+      kong.log.debug("egress-proxy: ", service.protocol,
+                     " upstream, bypassing the proxy")
       return
     end
-    kong.log.err("egress-proxy: https upstream needs CONNECT tunneling, ",
-                 "which this plugin cannot do; use on_https=bypass or a ",
-                 "transparent proxy for https egress")
-    return fail(503, "https egress via forward proxy is not supported")
+    kong.log.err("egress-proxy: ", service.protocol, " upstream cannot ",
+                 "cross a forward proxy as HTTP/1.1 absolute-form; use ",
+                 "on_https=bypass or a transparent proxy for this egress")
+    return fail(503, service.protocol ..
+                     " egress via forward proxy is not supported")
   end
 
   -- nginx's proxy_pass cannot emit an absolute-form request line: Kong's
@@ -95,6 +99,15 @@ function Handler:access(conf)
     return fail(502, "egress proxy response failed")
   end
   httpc:set_keepalive()
+
+  if res.status == 407 then
+    -- Proxy-Authenticate is hop-by-hop and stripped below; a client can
+    -- never satisfy the proxy's challenge, so surface a gateway error.
+    kong.log.err("egress-proxy: proxy ", conf.proxy_host, ":",
+                 conf.proxy_port, " requires or rejected authentication ",
+                 "(407); check proxy_username/proxy_password")
+    return fail(502, "egress proxy authentication failed")
+  end
 
   if resp_body == "" then
     resp_body = nil
