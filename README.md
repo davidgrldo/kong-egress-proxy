@@ -2,6 +2,7 @@
 
 [![test](https://github.com/davidgrldo/kong-egress-proxy/actions/workflows/test.yml/badge.svg)](https://github.com/davidgrldo/kong-egress-proxy/actions/workflows/test.yml)
 [![Kong OSS 3.x](https://img.shields.io/badge/Kong%20OSS-3.x-003459)](https://konghq.com)
+[![LuaRocks](https://img.shields.io/luarocks/v/davidgrldo/kong-egress-proxy)](https://luarocks.org/modules/davidgrldo/kong-egress-proxy)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 **Route Kong's upstream traffic through a forward proxy (Squid, tinyproxy,
@@ -124,8 +125,14 @@ e2e/run.sh
 ## Installation
 
 ```sh
-cd plugins/egress-proxy && luarocks make kong-egress-proxy-0.1.0-1.rockspec
+luarocks install kong-egress-proxy
 export KONG_PLUGINS=bundled,egress-proxy
+```
+
+Or from a checkout:
+
+```sh
+cd plugins/egress-proxy && luarocks make kong-egress-proxy-0.1.0-1.rockspec
 ```
 
 ## Roadmap
