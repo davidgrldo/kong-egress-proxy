@@ -1,0 +1,69 @@
+_format_version: "3.0"
+
+# e2e config. Routes are keyed to scenarios; run.sh asserts against the
+# echo backend's view of the request AND squid's access log.
+
+services:
+  # Baseline: no plugin, direct to the echo backend.
+  - name: direct
+    url: http://echo.internal:8080
+    routes:
+      - name: direct-route
+        paths: ["/direct"]
+        strip_path: false
+
+  # Through the proxy: absolute-form request line, origin Host restored.
+  - name: via-proxy
+    url: http://echo.internal:8080
+    routes:
+      - name: via-route
+        paths: ["/via"]
+        strip_path: false
+    plugins:
+      - name: egress-proxy
+        config:
+          proxy_host: squid.internal
+          proxy_port: 3128
+
+  # Credentials configured: squid (no auth required) must consume the
+  # Proxy-Authorization header; the origin must never see it.
+  - name: via-auth
+    url: http://echo.internal:8080
+    routes:
+      - name: via-auth-route
+        paths: ["/auth"]
+        strip_path: false
+    plugins:
+      - name: egress-proxy
+        config:
+          proxy_host: squid.internal
+          proxy_port: 3128
+          proxy_username: kong
+          proxy_password: s3cret
+
+  # https upstream, default on_https=reject -> 503.
+  - name: https-reject
+    url: https://echo.internal:8443
+    routes:
+      - name: https-reject-route
+        paths: ["/https-reject"]
+        strip_path: false
+    plugins:
+      - name: egress-proxy
+        config:
+          proxy_host: squid.internal
+          proxy_port: 3128
+
+  # https upstream, on_https=bypass -> direct TLS, proxy untouched.
+  - name: https-bypass
+    url: https://echo.internal:8443
+    routes:
+      - name: https-bypass-route
+        paths: ["/https-bypass"]
+        strip_path: false
+    plugins:
+      - name: egress-proxy
+        config:
+          proxy_host: squid.internal
+          proxy_port: 3128
+          on_https: bypass

@@ -1,0 +1,31 @@
+services:
+  echo:
+    image: mendhak/http-https-echo:37
+    hostname: echo
+    networks:
+      default:
+        aliases: [echo.internal]
+
+  squid:
+    image: ubuntu/squid:latest
+    hostname: squid
+    volumes:
+      - ./squid.conf:/etc/squid/squid.conf:ro
+    networks:
+      default:
+        aliases: [squid.internal]
+
+  kong:
+    image: kong:3.9
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /e2e/kong.yml
+      KONG_PLUGINS: bundled,egress-proxy
+      KONG_PROXY_LISTEN: "0.0.0.0:8000"
+      KONG_LOG_LEVEL: notice
+    volumes:
+      - ./kong.yml:/e2e/kong.yml:ro
+      - ../plugins/egress-proxy/kong/plugins/egress-proxy:/usr/local/share/lua/5.1/kong/plugins/egress-proxy:ro
+    ports:
+      - "18100:8000"
+    depends_on: [echo, squid]
