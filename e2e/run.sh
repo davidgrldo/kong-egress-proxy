@@ -81,7 +81,7 @@ assert_json "proxied route reaches the origin" '.path' /via/orders -- "${VIA[@]}
 assert_json "query string survives the absolute-form rewrite" \
   '.query.a' 1 -- "${VIA[@]}"
 assert_json "origin sees the origin Host, not the proxy" \
-  '.headers.host' echo.internal -- "${VIA[@]}"
+  '.headers.host' echo.internal:8080 -- "${VIA[@]}"
 
 # The proof: squid saw the request in absolute form for the origin.
 if squid_log | grep -q "http://echo.internal.*/via/orders"; then

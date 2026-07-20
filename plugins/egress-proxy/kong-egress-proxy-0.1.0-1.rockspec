@@ -11,14 +11,14 @@ description = {
   summary = "Route Kong's upstream traffic through a forward proxy (Squid etc.) — Kong OSS 3.x",
   detailed = [[
 An OSS alternative to the Enterprise forward-proxy plugin for the common
-"all egress must cross a DMZ proxy" topology: rewrites the request line to
-absolute-form (RFC 7230), redirects the connection to the proxy, restores
-the origin Host, and supports Proxy-Authorization basic credentials.
+"all egress must cross a DMZ proxy" topology: sends the upstream hop itself
+via Kong's bundled lua-resty-http with an absolute-form request line
+(RFC 7230), origin Host, and Proxy-Authorization basic credentials.
 
-HTTP upstreams only: https needs a CONNECT tunnel, which nginx's proxy_pass
-data path cannot speak — https services are rejected (default) or bypassed
-(on_https=bypass). Named egress-proxy to avoid clashing with the Enterprise
-plugin name.
+HTTP upstreams only: https needs a CONNECT tunnel, which the plugin
+deliberately does not attempt — https services are rejected (default) or
+bypassed (on_https=bypass). Named egress-proxy to avoid clashing with the
+Enterprise plugin name.
 ]],
   homepage = "https://github.com/davidgrldo/kong-egress-proxy",
   license = "Apache-2.0",

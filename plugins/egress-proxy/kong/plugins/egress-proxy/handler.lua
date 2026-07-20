@@ -1,9 +1,10 @@
 local proxy = require "kong.plugins.egress-proxy.proxy"
+local http = require "resty.http"
 
 -- PRIORITY 50: this must be (nearly) the LAST access-phase plugin, after
 -- anything that rewrites the path or target (request-transformer 801,
 -- routing plugins, auth), because it captures the final upstream and
--- redirects the connection to the proxy.
+-- takes over the connection to the proxy.
 local Handler = { VERSION = "0.1.0", PRIORITY = 50 }
 
 local function fail(status, message)
@@ -31,23 +32,75 @@ function Handler:access(conf)
     return fail(503, "https egress via forward proxy is not supported")
   end
 
-  local absolute = proxy.absolute_target(service, ngx.var.upstream_uri)
+  -- nginx's proxy_pass cannot emit an absolute-form request line: Kong's
+  -- template is `proxy_pass $upstream_scheme://kong_upstream$upstream_uri`
+  -- and nginx requires the URI part after the literal host to start with
+  -- "/" — an absolute URI in ngx.var.upstream_uri fails URL parsing
+  -- ("invalid port in upstream"). So the plugin sends this hop itself with
+  -- Kong's bundled lua-resty-http (the Enterprise forward-proxy takes the
+  -- same road). Consequence: the response is buffered, not streamed.
+  local absolute = proxy.absolute_target(service, ngx.var.upstream_uri,
+                                         kong.request.get_raw_query())
 
-  -- Order matters: set_target() may reset upstream state, so the request
-  -- line and headers are written after it.
-  kong.service.set_target(conf.proxy_host, conf.proxy_port)
-  kong.service.request.set_scheme("http") -- the hop TO the proxy is plain
-  ngx.var.upstream_uri = absolute
-
-  -- set_target() overwrites ngx.var.upstream_host with the proxy host;
-  -- the origin Host must be restored so the proxy and the origin agree
-  -- on the target (Kong put the service host there in access.before).
-  kong.service.request.set_header("Host", service.host)
-
+  local auth
   if conf.proxy_username and conf.proxy_username ~= ngx.null then
-    kong.service.request.set_header("Proxy-Authorization",
-      proxy.basic_auth(conf.proxy_username, conf.proxy_password))
+    auth = proxy.basic_auth(conf.proxy_username, conf.proxy_password)
   end
+
+  local body, err = kong.request.get_raw_body()
+  if err then
+    -- ponytail: bodies spooled to a temp file are not forwarded; raise
+    -- client_body_buffer_size if large uploads must cross the proxy.
+    kong.log.err("egress-proxy: cannot read request body: ", err)
+    return fail(413, "request body too large to forward through the proxy")
+  end
+  if body == "" then
+    body = nil
+  end
+
+  local httpc = http.new()
+  httpc:set_timeouts(service.connect_timeout or 60000,
+                     service.write_timeout or 60000,
+                     service.read_timeout or 60000)
+
+  local ok
+  ok, err = httpc:connect({ scheme = "http",
+                            host = conf.proxy_host,
+                            port = conf.proxy_port })
+  if not ok then
+    kong.log.err("egress-proxy: cannot reach proxy ", conf.proxy_host, ":",
+                 conf.proxy_port, ": ", err)
+    return fail(502, "egress proxy is unreachable")
+  end
+
+  local res
+  res, err = httpc:request({
+    method = kong.request.get_method(),
+    path = absolute,
+    headers = proxy.outbound_headers(kong.request.get_headers(),
+                                     proxy.authority(service), auth),
+    body = body,
+  })
+  if not res then
+    kong.log.err("egress-proxy: request via ", conf.proxy_host, ":",
+                 conf.proxy_port, " failed: ", err)
+    return fail(502, "egress proxy request failed")
+  end
+
+  local resp_body
+  resp_body, err = res:read_body()
+  if err then
+    kong.log.err("egress-proxy: reading response via ", conf.proxy_host,
+                 " failed: ", err)
+    return fail(502, "egress proxy response failed")
+  end
+  httpc:set_keepalive()
+
+  if resp_body == "" then
+    resp_body = nil
+  end
+  return kong.response.exit(res.status, resp_body,
+                            proxy.response_headers(res.headers))
 end
 
 return Handler

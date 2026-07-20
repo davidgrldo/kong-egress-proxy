@@ -28,24 +28,36 @@ A forward proxy expects the request line in **absolute-form**
 (RFC 7230 §5.3.2): `GET http://origin/path HTTP/1.1` — that's how it knows
 where to forward. The 2018 plugin skipped this and only worked with
 specially configured proxies; standard Squid rejects origin-form on a
-forward port. This plugin, in the access phase:
+forward port.
 
-1. builds the absolute-form URI from the Service entity and the final
-   upstream path (after `strip_path`, request-transformer, etc. — the
-   plugin runs at `PRIORITY = 50`, near the end of the phase);
-2. redirects the connection to the proxy (`set_target`);
-3. restores the origin `Host` header (which `set_target` overwrites);
-4. adds `Proxy-Authorization` when credentials are configured.
+nginx's own data path cannot produce that request line: Kong's template is
+`proxy_pass $upstream_scheme://kong_upstream$upstream_uri`, and nginx
+requires the URI part after the host to start with `/` — an absolute URI
+in `ngx.var.upstream_uri` fails nginx's URL parsing outright
+(`invalid port in upstream`). So, like the Enterprise `forward-proxy`,
+this plugin sends the hop itself. In the access phase it:
 
-The query string is untouched: Kong core appends it to the request line
-*after* plugin access, so it lands on the absolute URI automatically —
-asserted in the e2e suite.
+1. builds the absolute-form URI (path + query) from the Service entity and
+   the final upstream path (after `strip_path`, request-transformer, etc.
+   — the plugin runs at `PRIORITY = 50`, near the end of the phase);
+2. re-sends the request to the proxy with Kong's bundled `lua-resty-http`,
+   hop-by-hop headers stripped;
+3. sets `Host` to the origin authority (`host[:port]`) — it must match the
+   URI authority, which the proxy treats as canonical and rewrites a
+   mismatching `Host` from;
+4. adds `Proxy-Authorization` when credentials are configured;
+5. returns the proxy's response via `kong.response.exit`.
+
+Trade-offs of owning the hop: the response is buffered (no streaming), and
+a request body must fit in nginx's client body buffer to be forwarded
+(oversized bodies get a clear `413`).
 
 ## Scope: http upstreams only — deliberately
 
 A forward proxy carries **https** as a `CONNECT` tunnel with the TLS
-handshake inside it. nginx's `proxy_pass` data path — and therefore any
-Kong plugin — cannot speak that. Two honest options per plugin instance:
+handshake inside it. Kong's data path cannot speak that, and hand-rolling
+TLS-inside-TLS in plugin Lua is fighting the platform. Two honest options
+per plugin instance:
 
 - `on_https: reject` (default) — https Services get a `503` with a clear
   log line, so a misconfiguration is loud, never silent.
@@ -71,7 +83,7 @@ with a warning.
 
 ## Tests
 
-Every behavior claimed here is asserted: **13 unit tests** (plain Lua 5.1,
+Every behavior claimed here is asserted: **18 unit tests** (plain Lua 5.1,
 kong/ngx mocked) and a **10-case e2e suite** against real Kong 3.9 + real
 Squid. The e2e proves proxying by reading **Squid's access log** — not just
 end-to-end success — including the negative case: bypassed https traffic
