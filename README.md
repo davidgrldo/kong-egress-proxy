@@ -1,7 +1,28 @@
 # kong-egress-proxy
 
+[![test](https://github.com/davidgrldo/kong-egress-proxy/actions/workflows/test.yml/badge.svg)](https://github.com/davidgrldo/kong-egress-proxy/actions/workflows/test.yml)
+[![Kong OSS 3.x](https://img.shields.io/badge/Kong%20OSS-3.x-003459)](https://konghq.com)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 **Route Kong's upstream traffic through a forward proxy (Squid, tinyproxy,
 corporate DMZ proxies) — for Kong Gateway OSS 3.x.**
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant K as Kong<br/>(egress-proxy)
+    participant S as Forward proxy<br/>(Squid, DMZ)
+    participant O as Origin
+
+    C->>K: GET /orders?id=1
+    K->>S: GET http://origin:8080/orders?id=1<br/>absolute-form + Proxy-Authorization
+    S->>O: GET /orders?id=1<br/>Host: origin:8080
+    O-->>S: 200
+    S-->>K: 200 (Proxy-Authorization consumed)
+    K-->>C: 200
+```
+
+## Why
 
 The "all egress must cross the DMZ proxy" topology is standard in banking
 and regulated networks. Kong Enterprise ships a `forward-proxy` plugin for
@@ -10,6 +31,8 @@ path, and the one community attempt
 ([tfabien/kong-forward-proxy](https://github.com/tfabien/kong-forward-proxy))
 died in 2018 targeting Kong 0.x. This is the 3.x successor — named
 `egress-proxy` so it never clashes with the Enterprise plugin name.
+
+## Quick start
 
 ```yaml
 plugins:
@@ -21,6 +44,9 @@ plugins:
       proxy_password: "{vault://env/squid-password}"
       on_https: reject              # or bypass (see "Scope: http only")
 ```
+
+Apply globally, per-service, or per-route. Serviceless routes are skipped
+with a warning.
 
 ## How it works
 
@@ -77,9 +103,6 @@ plugin. Anything claiming otherwise is fighting the data path.
 | `proxy_username` | string | *(none)* | Basic credentials for the proxy hop. |
 | `proxy_password` | string | *(none)* | Referenceable — supports `{vault://...}` so it never sits in plain config. Requires `proxy_username`. |
 | `on_https` | string | `reject` | `reject` https Services with 503, or `bypass` the proxy for them. |
-
-Apply globally, per-service, or per-route. Serviceless routes are skipped
-with a warning.
 
 ## Tests
 
